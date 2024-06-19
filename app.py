@@ -1,48 +1,46 @@
-from flask import Flask, request, jsonify
-from core.main import core_ocr
-import skimage
+from flask import Flask, jsonify, request
 import os
-import cv2
 import numpy as np
 from datetime import datetime
+import mysql.connector
 from tensorflow.keras.models import load_model
-from ultralytics import YOLO
 from tensorflow.keras.applications.mobilenet import preprocess_input
 from sklearn.preprocessing import StandardScaler
+from google.cloud import storage
+import joblib
+import skimage.io
+from core.main import core_ocr
 from dotenv import load_dotenv
-from sqlalchemy import create_engine, exc, text
-from sqlalchemy.orm import sessionmaker
 
-load_dotenv()
-# Initialize the app
+load_dotenv()  # Load environment variables from .env file if present
+
 app = Flask(__name__)
 
-# Initialize database
-DB_USER = os.getenv("DB_USER")
-DB_PASSWORD = os.getenv("DB_PASSWORD")
-DB_NAME = os.getenv("DB_NAME")
-DB_HOST = os.getenv("DB_HOST")
-DB_PORT = os.getenv("DB_PORT")
-INSTANCE_CONNECTION_NAME = os.getenv("INSTANCE_CONNECTION_NAME")
+# Configuration for Google Cloud Storage
+os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
+storage_client = storage.Client()
 
-# Using TCP/IP for MySQL connection
-db_uri = f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}?charset=utf8mb4"
+# Retrieve database connection details from environment variables
+db_user = os.getenv('DB_USER')
+db_password = os.getenv('DB_PASSWORD')
+db_host = os.getenv('DB_HOST')
+db_name = os.getenv('DB_NAME')
 
-try:
-    # Create a new engine
-    engine = create_engine(db_uri)
-    Session = sessionmaker(bind=engine)
-    session = Session()
-    print("Database connection successful")
-except exc.SQLAlchemyError as e:
-    print(f"Failed to connect to database: {e}")
+# Configuration dictionary using environment variables
+config = {
+    'user': db_user,
+    'password': db_password,
+    'host': db_host,
+    'database': db_name,
+    'raise_on_warnings': True
+}
 
-classify_model = load_model('models/model_checkpoint.h5')
+# Load models
+classify_model = load_model('models/model_new.h5')
 grade_model = load_model('models/model_grade_predict_dummy_4.h5')
 
-# Initialize the scaler for classification
-scaler = StandardScaler()
-scaler = scaler.fit([[0, 0, 0, 0, 0]])
+# Load the scaler using joblib
+scaler = joblib.load('models/scaler.joblib')
 
 grade_labels = ['A', 'B', 'C', 'D', 'E']
 
@@ -62,94 +60,64 @@ def calculate_bmr(gender, age, body_height, body_weight, activity):
 
     return tdee
 
-# Load the models after the application starts
-ocr_model_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "core/models/detect-nutrition-label.pt")
-grade_model_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "models/model_grade_predict_dummy_4.h5")
-
-model = YOLO(ocr_model_path)
-grade_model = load_model(grade_model_path)
-print("Models loaded!")
-
-# Define grade labels
-grade_labels = ['A', 'B', 'C', 'D', 'E']
-
-# Route to test connection
 @app.route("/", methods=["GET"])
 def main():
     return "Hello, world!"
 
-# Route to do OCR and grade
 @app.route("/ocr", methods=["POST"])
-def ocr_and_grade_endpoint():
+def ocr_endpoint():
+    # get parent/working dir
+    dirname = os.path.dirname(os.path.realpath(__file__))
+
     try:
-        # Get request body
+        # get req body
         req = request.get_json()
-        # Get the image URL stored in the body
+        # get the image url stored in the body
         image_url = req["url"]
 
         try:
-            # Read the image URL, and convert to numpy array
+            # read the image url, and convert to numpy array
             image = skimage.io.imread(image_url)
-            # Convert to 3 channels (ignore the alpha)
-            image = cv2.cvtColor(image, cv2.COLOR_RGBA2BGR)
         except Exception as e:
-            # If error, return error
+            # if error, return error
             return jsonify({"error": f"Image failed to load: {e}"}), 500
 
         try:
-            # Load the nutrients list text and tessdata_dir
-            nutrients_txt_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "core/data/nutrients.txt")
-            tessdata_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), "core/data/tessdata")
+            # load the nutrition label detection model
+            model_path = os.path.join(dirname, "core/models/detect-nutrition-label.pt")
+            # load the nutrients list text
+            nutrients_txt_path = os.path.join(dirname, "core/data/nutrients.txt")
+            # load local tessdata_dir
+            tessdata_dir = os.path.join(dirname, "core/data/tessdata")
 
-            # Run the OCR
-            prediction = core_ocr(
-                image, model, tessdata_dir, nutrients_txt_path, debug=True
-            )
-
-            if not prediction:
-                return jsonify({"error": "OCR failed to extract any data"}), 500
-
-            # Extract nutrition facts from OCR prediction
-            nutrition_facts = {
-                "energy": float(prediction.get('energy', 0)),
-                "protein": float(prediction.get('protein', 0)),
-                "fat": float(prediction.get('fat', 0)),
-                "carbs": float(prediction.get('carbs', 0)),
-                "sugar": float(prediction.get('sugar', 0)),
-                "sodium": float(prediction.get('sodium', 0)),
-                "saturated_fat": float(prediction.get('saturated-fat', 0)),
-                "fiber": float(prediction.get('fiber', 0))
-            }
-
-            # Prepare the input data for the model
-            input_data = np.array([[nutrition_facts['energy'], nutrition_facts['protein'], nutrition_facts['fat'], 
-                                    nutrition_facts['carbs'], nutrition_facts['sugar'], nutrition_facts['sodium'],
-                                    nutrition_facts['saturated_fat'], nutrition_facts['fiber']]])
-
-            # Model prediction
-            predictions = grade_model.predict(input_data)
-            predicted_grade_index = np.argmax(predictions)
-            grade = grade_labels[predicted_grade_index]
-
-            # Save the prediction result and nutrition facts to the MySQL database
-            with engine.connect() as connection:
-                connection.execute(
-                    text("INSERT INTO product_grades (grade, energy, protein, fat, carbs, sugar, sodium, saturated_fat, fiber, created_at, updated_at) VALUES (:grade, :energy, :protein, :fat, :carbs, :sugar, :sodium, :saturated_fat, :fiber, :created_at, :updated_at)"),
-                    {'grade': grade, 'energy': nutrition_facts['energy'], 'protein': nutrition_facts['protein'], 'fat': nutrition_facts['fat'], 'carbs': nutrition_facts['carbs'], 'sugar': nutrition_facts['sugar'], 'sodium': nutrition_facts['sodium'], 'saturated_fat': nutrition_facts['saturated_fat'], 'fiber': nutrition_facts['fiber'], 'created_at': datetime.now(), 'updated_at': datetime.now()}
+            try:
+                # run the ocr
+                prediction = core_ocr(
+                    image, model_path, tessdata_dir, nutrients_txt_path, debug=True
                 )
 
-            result = {
-                "nutrition_facts": nutrition_facts,
-                "grade": grade
-            }
+                # return the successfully read nutrition labels
+                return jsonify(prediction)
 
-            return jsonify(result), 200
+            # catch specific errors from core_ocr
+            except (
+                FileNotFoundError,
+                ValueError,
+            ) as e:
+                return (
+                    jsonify({"": str(e)}),
+                    400,
+                )
 
-        # Catch general model prediction errors
+            # or return 500 if it's a server-side/unexpected error
+            except Exception as e:
+                return jsonify({"error": str(e)}), 500
+
+        # catch general model prediction errors
         except Exception as e:
             return jsonify({"error": f"Model prediction failed: {e}"}), 500
 
-    # Catch missing URL or product_id
+    # catch missing url
     except KeyError:
         return jsonify({"error": "Missing 'url' field in the request"}), 400
 
@@ -159,21 +127,21 @@ def grade_endpoint():
     try:
         product_id = int(content['product_id'])
 
-        # Execute SQL query
-        with engine.connect() as connection:
-            result = connection.execute(text("SELECT energy, protein, fat, carbs, sugar, sodium, saturated_fat, fiber FROM products WHERE product_id = :product_id"), {'product_id': product_id})
-            row = result.fetchone()
+        cnx = mysql.connector.connect(**config)
+        cursor = cnx.cursor()
+        cursor.execute("SELECT energy, protein, fat, carbs, sugar, sodium, saturated_fat, fiber FROM products WHERE product_id = %s", (product_id,))
+        result = cursor.fetchone()
 
-        if row:
+        if result is not None:
             nutrition_facts = {
-                "energy": float(row[0]),
-                "protein": float(row[1]),
-                "fat": float(row[2]),
-                "carbs": float(row[3]),
-                "sugar": float(row[4]),
-                "sodium": float(row[5]),
-                "saturated_fat": float(row[6]),
-                "fiber": float(row[7])
+                "energy": float(result[0]),
+                "protein": float(result[1]),
+                "fat": float(result[2]),
+                "carbs": float(result[3]),
+                "sugar": float(result[4]),
+                "sodium": float(result[5]),
+                "saturated_fat": float(result[6]),
+                "fiber": float(result[7])
             }
 
             # Prepare the input data for the model
@@ -188,11 +156,11 @@ def grade_endpoint():
             grade = grade_labels[predicted_grade_index]
 
             # Save the prediction result and nutrition facts to the MySQL database
-            with engine.connect() as connection:
-                connection.execute(
-                    text("INSERT INTO product_grades (product_id, grade, energy, protein, fat, carbs, sugar, sodium, saturated_fat, fiber, created_at, updated_at) VALUES (:product_id, :grade, :energy, :protein, :fat, :carbs, :sugar, :sodium, :saturated_fat, :fiber, :created_at, :updated_at)"),
-                    {'product_id': product_id, 'grade': grade, 'energy': nutrition_facts['energy'], 'protein': nutrition_facts['protein'], 'fat': nutrition_facts['fat'], 'carbs': nutrition_facts['carbs'], 'sugar': nutrition_facts['sugar'], 'sodium': nutrition_facts['sodium'], 'saturated_fat': nutrition_facts['saturated_fat'], 'fiber': nutrition_facts['fiber'], 'created_at': datetime.now(), 'updated_at': datetime.now()}
-                )
+            cursor.execute(
+                "INSERT INTO product_grades (product_id, grade, energy, protein, fat, carbs, sugar, sodium, saturated_fat, fiber, created_at, updated_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                (product_id, grade, nutrition_facts['energy'], nutrition_facts['protein'], nutrition_facts['fat'], nutrition_facts['carbs'], nutrition_facts['sugar'], nutrition_facts['sodium'], nutrition_facts['saturated_fat'], nutrition_facts['fiber'], datetime.now(), datetime.now())
+            )
+            cnx.commit()
 
             result = {
                 "nutrition_facts": nutrition_facts,
@@ -204,7 +172,12 @@ def grade_endpoint():
             return jsonify({'message': 'No record found for the given product_id'}), 404
 
     except Exception as e:
+        cnx.rollback()
         return jsonify({'message': 'Error processing the request', 'details': str(e)}), 400
+
+    finally:
+        cursor.close()
+        cnx.close()
 
 @app.route('/classify', methods=['POST'])
 def classify():
@@ -212,15 +185,17 @@ def classify():
     try:
         user_id = int(content['id'])
 
-        # Retrieve user from database using SQLAlchemy session
-        user = session.execute(text("SELECT * FROM users WHERE id = :id"), {'id': user_id}).fetchone()
+        cnx = mysql.connector.connect(**config)
+        cursor = cnx.cursor()
+        cursor.execute("SELECT * FROM users WHERE id = %s", (user_id,))
+        result = cursor.fetchone()
 
-        if user:
-            gender = int(user[1])
-            age = float(user[2])
-            body_weight = float(user[4])
-            body_height = float(user[3])
-            activity_level = int(user[5])
+        if result is not None:
+            gender = int(result[1])
+            age = float(result[2])
+            body_weight = float(result[4])
+            body_height = float(result[3])
+            activity_level = int(result[5])
 
             calories = calculate_bmr(gender, age, body_height, body_weight, activity_level)
 
@@ -241,11 +216,11 @@ def classify():
             }
 
             # Save the prediction result to the MySQL database
-            with engine.connect() as connection:
-                connection.execute(
-                    text("INSERT INTO weight_classification (weight_status, calories, created_at, updated_at) VALUES (:weight_status, :calories, :created_at, :updated_at)"),
-                    {'weight_status': weight_status[predicted_weight_status_index], 'calories': calories, 'created_at': datetime.now(), 'updated_at': datetime.now()}
-                )
+            cursor.execute(
+                "INSERT INTO weight_classification (weight_status, calories, created_at, updated_at) VALUES (%s, %s, %s, %s)",
+                (weight_status[predicted_weight_status_index], calories, datetime.now(), datetime.now())
+            )
+            cnx.commit()
 
             result = {
                 "weight_status": weight_status[predicted_weight_status_index],
@@ -257,8 +232,8 @@ def classify():
             return jsonify({'message': 'No record found for the given id'}), 404
 
     except Exception as e:
+        cnx.rollback()
         return jsonify({'message': 'Error processing the request', 'details': str(e)}), 400
 
 if __name__ == "__main__":
-    # Set debug=True for local development
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)), debug=True)
+    app.run(debug=True, host='0.0.0.0',port=8080)
