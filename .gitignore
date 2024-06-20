@@ -239,6 +239,3 @@ fabric.properties
 # Datasets
 core/data/datasets
 core/data/tf-record-datasets
-
-nutrio.json
-nutrio1.json

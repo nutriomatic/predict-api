@@ -1,15 +1,19 @@
-# Use a specific Python version
+# syntax=docker/dockerfile:1
+
 ARG PYTHON_VERSION=3.11.9
 FROM python:${PYTHON_VERSION}-slim as base
 
-# Set environment variables to prevent .pyc files and enable unbuffered mode
+# Prevents Python from writing pyc files.
 ENV PYTHONDONTWRITEBYTECODE=1
+
+# Keeps Python from buffering stdout and stderr to avoid situations where
+# the application crashes without emitting any logs due to buffering.
 ENV PYTHONUNBUFFERED=1
 
-# Set the working directory
 WORKDIR /app
 
-# Create a non-root user
+# Create a non-privileged user that the app will run under.
+# See https://docs.docker.com/go/dockerfile-user-best-practices/
 ARG UID=10001
 RUN adduser \
     --disabled-password \
@@ -20,10 +24,9 @@ RUN adduser \
     --uid "${UID}" \
     appuser
 
-# Install gunicorn
-RUN pip install gunicorn
-
-# Install necessary dependencies for building Python packages and Tesseract OCR
+# Install tesseract OCR engine,
+# gcc, g++, and python3-dev for building certain Python packages,
+# and dependencies for opencv-python (cv2).
 RUN apt-get update && \
     apt-get install -y tesseract-ocr gcc g++ python3-dev libgl1 && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
@@ -34,16 +37,17 @@ COPY requirements.txt .
 # Install Python dependencies
 RUN python -m pip install -r requirements.txt
 
-# Switch to non-root user
+# Switch to the non-privileged user to run the application.
 USER appuser
 
 # Copy the application code
 COPY core/ ./core/
 COPY app.py .
+COPY models/ ./models/
 
-# Expose port
+# Expose the port Flask is running on
 ENV PORT 8080
 EXPOSE 8080
 
-# Use gunicorn to run the Flask application
-CMD ["gunicorn", "-b", "0.0.0.0:8080", "app:app"]
+# Define the command to run the application
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "app:app"]

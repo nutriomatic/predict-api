@@ -13,8 +13,4 @@ keras
 pandas
 scikit-learn
 seaborn
-mysql-connector-python
-sqlalchemy
-pymysql
 python-dotenv
-gunicorn

@@ -30,8 +30,5 @@
 **/obj
 **/secrets.dev.yaml
 **/values.dev.yaml
-.env
-nutrio.json
-nutrio1.json
 LICENSE
 README.md

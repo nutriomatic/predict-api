@@ -4,10 +4,10 @@ services:
       context: .
     ports:
       - 8080:8080
-    volumes: 
+    volumes:
       - .:/app
     restart: on-failure
-    develop:  
+    develop:
       watch:
         - path: .
           action: rebuild
