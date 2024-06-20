@@ -4,13 +4,11 @@
 
 This is a python code, so make sure you have python installed on your system.
 
-## Installation and Usage
-
-### Prerequisites
+### Installation and Usage
 
 [Docker](https://docs.docker.com/desktop/install/mac-install/) must be installed on your system.
 
-## Building the Docker Image
+### Building the Docker Image
 
 1. Clone the repository:
 
