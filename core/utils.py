@@ -1,7 +1,10 @@
 import re
+<<<<<<< HEAD
 import os
 from dotenv import load_dotenv
 from roboflow import Roboflow
+=======
+>>>>>>> master
 import cv2
 from PIL import Image, ImageEnhance
 import numpy as np
@@ -267,6 +270,7 @@ def separate_unit(string):
         return ""
 
 
+<<<<<<< HEAD
 # load roboflow project and download dataset to download_path
 def download_dataset(
     download_path: str, project_name: str, version: int, model_format: str
@@ -282,6 +286,22 @@ def download_dataset(
     )
 
     return
+=======
+# # load roboflow project and download dataset to download_path
+# def download_dataset(
+#     download_path: str, project_name: str, version: int, model_format: str
+# ):
+#     load_dotenv()
+
+#     rf = Roboflow(api_key=ROBOFLOW_API_KEY, model_format=model_format)
+
+#     # this won't download when location folder isn't empty
+#     rf.workspace().project(project_name).version(version).download(
+#         location=download_path
+#     )
+
+#     return
+>>>>>>> master
 
 
 def preprocess_ocr_reading(ocr_reading: str):
@@ -359,6 +379,7 @@ def detect_orientation(image):
 
 
 def rotateImage(image, angle):
+<<<<<<< HEAD
     row, col, channel = image.shape
     center = tuple(np.array([row, col]) / 2)
     rot_mat = cv2.getRotationMatrix2D(center, angle, 1.0)
@@ -367,3 +388,53 @@ def rotateImage(image, angle):
         cv2.cvtColor(image, cv2.COLOR_BGRA2BGR), rot_mat, (col, row)
     )
     return new_image
+=======
+    # credits to https://stackoverflow.com/a/47248339
+    size_reverse = np.array(image.shape[1::-1])  # swap x with y
+    M = cv2.getRotationMatrix2D(tuple(size_reverse / 2.0), angle, 1.0)
+    MM = np.absolute(M[:, :2])
+    size_new = MM @ size_reverse
+    M[:, -1] += (size_new - size_reverse) / 2.0
+    return cv2.warpAffine(image, M, tuple(size_new.astype(int)))
+
+
+def add_element(dict, key, value):
+    if key not in dict:
+        dict[key] = 0
+    dict[key] += value
+
+
+def normalize_units(nutritional_dict: dict[str, list]):
+    # convert to g
+    conversion_dict = {
+        "kkal": 0.12959782,
+        "kcal": 0.12959782,
+        "mg": 0.001,
+        "J": 0.23890295761862,
+        "j": 0.23890295761862,
+        "joule": 0.23890295761862,
+        "Joule": 0.23890295761862,
+        "kJ": 238.90295761862,
+        "kj": 238.90295761862,
+        # add more
+    }
+
+    converted_dict = {}
+    keys = list(nutritional_dict.keys())
+    for nutritional_value_key in keys:
+        nutritional_value = nutritional_dict[nutritional_value_key]
+        agg_score = 0
+        for score, unit in nutritional_value:
+            # keep using kkal/kcal for energi
+            if nutritional_value_key != "energi" and unit.lower() in list(
+                conversion_dict.keys()
+            ):
+                agg_score += score * conversion_dict[unit.lower()]
+            else:
+                # assume its just mg for other than energy
+                agg_score += score
+
+        add_element(converted_dict, nutritional_value_key, agg_score)
+
+    return converted_dict
+>>>>>>> master

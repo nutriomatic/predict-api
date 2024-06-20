@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 from ultralytics import YOLO
 from core.utils import *
 
@@ -22,6 +23,13 @@ def core_ocr(image, model_path, tessdata_dir, nutrients_txt_path, debug=False):
         if debug:
             print(f"Rotated image: {image}")
 
+=======
+from core.utils import *
+
+
+def core_ocr(image, model, tessdata_dir, nutrients_txt_path, debug=False):
+    try:
+>>>>>>> master
         # get position of nutrition table
         prediction = model.predict(image)
         if debug:
@@ -36,6 +44,19 @@ def core_ocr(image, model_path, tessdata_dir, nutrients_txt_path, debug=False):
         if debug:
             print(f"Image cropped: {image_cropped}\n")
 
+<<<<<<< HEAD
+=======
+        # get OSD of the image
+        orientation = detect_orientation(image_cropped)
+        if debug:
+            print(f"Image's orientation: {orientation}")
+
+        # correct image's rotation
+        image_cropped = rotateImage(image_cropped, orientation["orientation"] - 360)
+        if debug:
+            print(f"Rotated image: {image}")
+
+>>>>>>> master
         # preprocess the image before OCR
         image_preprocessed = preprocess_for_ocr(image_cropped)
         if debug:
@@ -73,7 +94,15 @@ def core_ocr(image, model_path, tessdata_dir, nutrients_txt_path, debug=False):
             label_value_list=corrected_readings
         )
         if debug:
+<<<<<<< HEAD
             print(f"End result: {nutritional_dictionary}")
+=======
+            print(f"End result: {nutritional_dictionary}\n")
+
+        nutritional_dictionary = normalize_units(nutritional_dictionary)
+        if debug:
+            print(f"End result normalized: {nutritional_dictionary}\n")
+>>>>>>> master
 
         return nutritional_dictionary
 

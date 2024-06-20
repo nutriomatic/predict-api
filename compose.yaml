@@ -1,0 +1,13 @@
+services:
+  server:
+    build:
+      context: .
+    ports:
+      - 8080:8080
+    volumes:
+      - .:/app
+    restart: on-failure
+    develop:
+      watch:
+        - path: .
+          action: rebuild
